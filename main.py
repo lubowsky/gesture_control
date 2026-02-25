@@ -1,100 +1,71 @@
 import cv2
 import mediapipe as mp
+import numpy as np
+import joblib
 
-# ---------------- ФУНКЦИЯ ОПРЕДЕЛЕНИЯ ПАЛЬЦЕВ ----------------
-def fingers_up(hand_landmarks):
-    fingers = []
+model = joblib.load("gesture_model.pkl")
 
-    lm = hand_landmarks.landmark
-
-    # Большой палец (сравниваем по X)
-    if lm[4].x < lm[3].x:
-        fingers.append(1)
-    else:
-        fingers.append(0)
-
-    # Остальные пальцы (сравниваем по Y)
-    tips = [8, 12, 16, 20]
-
-    for tip in tips:
-        if lm[tip].y < lm[tip - 2].y:
-            fingers.append(1)
-        else:
-            fingers.append(0)
-
-    return fingers
-# ---------------------------------------------------------------
-
-def detect_gesture(fingers):
-    if fingers == [0, 0, 0, 0, 0]:
-        return "PAUSE"
-
-    if fingers == [1, 1, 1, 1, 1]:
-        return "PLAY"
-
-    if fingers == [0, 1, 1, 0, 0]:
-        return "NEXT"
-
-    return ""
-
-
-# Инициализация MediaPipe
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 
 hands = mp_hands.Hands(
-    max_num_hands=1,
+    max_num_hands=2,
     min_detection_confidence=0.7,
     min_tracking_confidence=0.7
 )
 
 cap = cv2.VideoCapture(0)
 
+sequence = []
+
 while True:
     ret, frame = cap.read()
     if not ret:
         break
 
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    results = hands.process(rgb_frame)
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = hands.process(rgb)
+
+    frame_data = []
 
     if results.multi_hand_landmarks:
         for hand_landmarks in results.multi_hand_landmarks:
 
-            # Рисуем скелет руки
             mp_drawing.draw_landmarks(
                 frame,
                 hand_landmarks,
                 mp_hands.HAND_CONNECTIONS
             )
 
-            # ---------------- ВОТ ЗДЕСЬ МЫ ВЫЗЫВАЕМ ФУНКЦИЮ ----------------
-            fingers = fingers_up(hand_landmarks)
+            for lm in hand_landmarks.landmark:
+                frame_data.extend([lm.x, lm.y, lm.z])
 
-            gesture = detect_gesture(fingers)
+    # если одна рука — дополняем нулями
+    while len(frame_data) < 126:
+        frame_data.append(0)
 
-            cv2.putText(
-                frame,
-                f"Gesture: {gesture}",
-                (10, 100),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (0, 0, 255),
-                2
-            )
+    sequence.append(frame_data)
 
-            cv2.putText(
-                frame,
-                f"Fingers: {fingers}",
-                (10, 50),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (0, 255, 0),
-                2
-            )
-            # ---------------------------------------------------------------
+    if len(sequence) > 30:
+        sequence.pop(0)
 
-    cv2.imshow("Hand Tracking", frame)
+    gesture = ""
+
+    if len(sequence) == 30:
+        input_data = np.array(sequence).flatten().reshape(1, -1)
+        gesture = model.predict(input_data)[0]
+
+    cv2.putText(
+        frame,
+        f"Gesture: {gesture}",
+        (10, 50),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1,
+        (0, 255, 0),
+        2
+    )
+
+    cv2.imshow("Gesture Recognition", frame)
 
     if cv2.waitKey(1) & 0xFF == 27:
         break
